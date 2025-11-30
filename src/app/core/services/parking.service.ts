@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { from, map, Observable, switchMap, shareReplay } from 'rxjs';
+import { from, map, Observable, switchMap, shareReplay, take, of } from 'rxjs';
 import { supabase } from '../supabase.client';
 import { ParkingSlot, VehicleType } from '../models/parking-slot.model';
 import { Vehicle } from '../models/vehicle.model';
@@ -92,12 +92,14 @@ export class ParkingService {
 
     // 1. Check if vehicle already exists and is currently parked
     return this.getVehicles$().pipe(
+      take(1), // Take only 1 value to ensure Observable completes
       switchMap((vehicles) => {
         const existingVehicle = vehicles.find((v) => v.licensePlate.toUpperCase() === trimmedPlate);
 
         // If vehicle exists, check if it's already parked
         if (existingVehicle) {
           return this.getActiveParkings$().pipe(
+            take(1), // Take only 1 value to ensure Observable completes
             switchMap((activeParkings) => {
               const isAlreadyParked = activeParkings.some(
                 (ap) => ap.vehicleId === existingVehicle.id
@@ -146,6 +148,7 @@ export class ParkingService {
   private processCheckIn(vehicleId: string, type: VehicleType): Observable<void> {
     // 1. Find available slot matching type
     return this.getSlots$().pipe(
+      take(1), // Take only 1 value to ensure Observable completes
       switchMap((slots) => {
         const availableSlot = slots.find((s) => s.status === 'empty' && s.type === type);
         if (!availableSlot) {
@@ -190,7 +193,7 @@ export class ParkingService {
                 .select()
                 .single()
             ).pipe(
-              map(({ data: updatedSlot, error: slotError }) => {
+              switchMap(({ data: updatedSlot, error: slotError }) => {
                 if (slotError) {
                   console.error('updateSlotStatus error', slotError);
                   // TODO: rollback using RxJS for better practice
@@ -208,6 +211,9 @@ export class ParkingService {
                 if (!updatedSlot) {
                   throw new Error('Cannot update slot status');
                 }
+
+                // Return Observable that emits and completes
+                return of(undefined);
               })
             );
           })
@@ -221,6 +227,7 @@ export class ParkingService {
     const normalized = licensePlate.trim().toUpperCase(); // Normalize same as checkIn
 
     return this.getVehicles$().pipe(
+      take(1), // Take only 1 value to ensure Observable completes
       switchMap((vehicles) => {
         const vehicle = vehicles.find((v) => v.licensePlate.toUpperCase() === normalized);
         if (!vehicle) {
@@ -229,6 +236,7 @@ export class ParkingService {
 
         // 2. Find active parking for this vehicle
         return this.getActiveParkings$().pipe(
+          take(1), // Take only 1 value to ensure Observable completes
           switchMap((activeParkings) => {
             const active = activeParkings.find((a) => a.vehicleId === vehicle.id);
             if (!active) {
@@ -255,7 +263,7 @@ export class ParkingService {
                     .select()
                     .single()
                 ).pipe(
-                  map(({ data: updatedSlot, error: slotError }) => {
+                  switchMap(({ data: updatedSlot, error: slotError }) => {
                     if (slotError) {
                       console.error('updateSlotStatus error', slotError);
                       throw new Error('Cannot update slot status');
@@ -264,6 +272,9 @@ export class ParkingService {
                     if (!updatedSlot) {
                       throw new Error('Cannot update slot status');
                     }
+
+                    // Return Observable that emits and completes
+                    return of(undefined);
                   })
                 );
               })

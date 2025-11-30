@@ -1,7 +1,7 @@
 import { AsyncPipe, CommonModule } from '@angular/common';
-import { Component, inject } from '@angular/core';
+import { Component, inject, ChangeDetectorRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { combineLatest, map, Observable } from 'rxjs';
+import { combineLatest, map, Observable, finalize } from 'rxjs';
 import { ActiveParking } from '../../../../core/models/active-parking.model';
 import { Vehicle } from '../../../../core/models/vehicle.model';
 import { ParkingService } from '../../../../core/services/parking.service';
@@ -15,6 +15,7 @@ import { ParkingService } from '../../../../core/services/parking.service';
 })
 export class ParkingActiveListPage {
   private readonly parking = inject(ParkingService);
+  private readonly cdr = inject(ChangeDetectorRef);
 
   readonly activeParkings$ = this.parking.getActiveParkings$();
   readonly vehicles$ = this.parking.getVehicles$();
@@ -62,19 +63,31 @@ export class ParkingActiveListPage {
       return;
     }
 
-    this.parking.checkOutByLicense(plate).subscribe({
-      next: () => {
-        this.message = `Vehicle ${plate} checked out successfully.`;
-        if (!license) {
-          this.licenseToCheckout = '';
-        }
-        this.isLoading = false;
-      },
-      error: (e: unknown) => {
-        this.error =
-          e instanceof Error ? e.message : `Vehicle with license plate "${plate}" not found.`;
-        this.isLoading = false;
-      },
-    });
+    this.parking
+      .checkOutByLicense(plate)
+      .pipe(
+        finalize(() => {
+          console.log('[ActiveList] finalize called, setting isLoading = false');
+          this.isLoading = false;
+          this.cdr.detectChanges(); // Force change detection
+        })
+      )
+      .subscribe({
+        next: () => {
+          console.log('[ActiveList] success');
+          this.message = `Vehicle ${plate} checked out successfully.`;
+          if (!license) {
+            this.licenseToCheckout = '';
+          }
+        },
+        error: (e: unknown) => {
+          console.error('[ActiveList] error:', e);
+          this.error =
+            e instanceof Error ? e.message : `Vehicle with license plate "${plate}" not found.`;
+        },
+        complete: () => {
+          console.log('[ActiveList] complete called');
+        },
+      });
   }
 }

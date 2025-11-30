@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
-import { Component, computed, inject } from '@angular/core';
+import { Component, computed, inject, ChangeDetectorRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { combineLatest, map, Observable, take } from 'rxjs';
+import { combineLatest, map, Observable, take, finalize, firstValueFrom } from 'rxjs';
 import { ActiveParking } from '../../../../core/models/active-parking.model';
 import { Vehicle } from '../../../../core/models/vehicle.model';
 import { ParkingService } from '../../../../core/services/parking.service';
@@ -17,6 +17,7 @@ import { PricingService } from '../../../../core/services/pricing.service';
 export class ParkingCheckOutPage {
   private readonly parking = inject(ParkingService);
   private readonly pricing = inject(PricingService);
+  private readonly cdr = inject(ChangeDetectorRef);
 
   readonly activeParkings$ = this.parking.getActiveParkings$();
   readonly vehicles$ = this.parking.getVehicles$();
@@ -49,7 +50,7 @@ export class ParkingCheckOutPage {
   message = '';
   isLoading = false;
 
-  protected search(): void {
+  protected async search(): Promise<void> {
     this.error = '';
     this.message = '';
     this.selectedVehicle = null;
@@ -61,9 +62,11 @@ export class ParkingCheckOutPage {
       return;
     }
 
-    // Subscribe to find vehicle and active parking (take only 1 value)
-    this.parkingData$.pipe(take(1)).subscribe(({ vehicles, activeParkings }) => {
-      const vehicle = vehicles.find((v) => v.licensePlate === plate);
+    try {
+      // Wait for data to be available before searching
+      const { vehicles, activeParkings } = await firstValueFrom(this.parkingData$);
+
+      const vehicle = vehicles.find((v) => v.licensePlate.toUpperCase() === plate.toUpperCase());
       if (!vehicle) {
         this.error = `Vehicle with license plate "${plate}" not found.`;
         return;
@@ -77,7 +80,11 @@ export class ParkingCheckOutPage {
 
       this.selectedVehicle = vehicle;
       this.selectedActive = active;
-    });
+      this.cdr.detectChanges(); // Force change detection
+    } catch (error) {
+      console.error('[CheckOut] search error:', error);
+      this.error = 'An error occurred while searching for vehicle.';
+    }
   }
 
   protected confirmCheckout(): void {
@@ -93,19 +100,31 @@ export class ParkingCheckOutPage {
     const plate = this.selectedVehicle.licensePlate;
     const fee = this.fee();
 
-    this.parking.checkOutByLicense(plate).subscribe({
-      next: () => {
-        this.message = `Vehicle ${plate} checked out successfully. Parking fee: ${fee.toLocaleString()} VND.`;
-        this.selectedVehicle = null;
-        this.selectedActive = null;
-        this.licensePlate = '';
-        this.isLoading = false;
-      },
-      error: (e: unknown) => {
-        this.error = e instanceof Error ? e.message : 'An error occurred during check-out.';
-        this.isLoading = false;
-      },
-    });
+    this.parking
+      .checkOutByLicense(plate)
+      .pipe(
+        finalize(() => {
+          console.log('[CheckOut] finalize called, setting isLoading = false');
+          this.isLoading = false;
+          this.cdr.detectChanges(); // Force change detection
+        })
+      )
+      .subscribe({
+        next: () => {
+          console.log('[CheckOut] success');
+          this.message = `Vehicle ${plate} checked out successfully. Parking fee: ${fee.toLocaleString()} VND.`;
+          this.selectedVehicle = null;
+          this.selectedActive = null;
+          this.licensePlate = '';
+        },
+        error: (e: unknown) => {
+          console.error('[CheckOut] error:', e);
+          this.error = e instanceof Error ? e.message : 'An error occurred during check-out.';
+        },
+        complete: () => {
+          console.log('[CheckOut] complete called');
+        },
+      });
   }
 
   private calculateDurationHours(checkIn: Date, now: Date): number {
